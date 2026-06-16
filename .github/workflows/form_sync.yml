@@ -1,0 +1,38 @@
+name: FORM → Garmin Sync
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch:  # Allow manual trigger from GitHub Actions UI
+
+jobs:
+  sync:
+    name: Sync FORM export to Garmin Connect
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install form_sync dependencies
+        run: pip install -e ".[form_sync]"
+
+      - name: Run FORM sync pipeline
+        env:
+          GMAIL_ADDRESS:            ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
+          GARMIN_EMAIL:             ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD:          ${{ secrets.GARMIN_PASSWORD }}
+          GARMIN_TOKENS:            ${{ secrets.GARMIN_TOKENS }}
+          GH_PAT:                   ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY:        ${{ github.repository }}
+          GARMIN_SERIAL_NUMBER:     ${{ secrets.GARMIN_SERIAL_NUMBER }}
+          GARMIN_DEVICE_ID:         ${{ secrets.GARMIN_DEVICE_ID }}
+          GARMIN_SOFTWARE_VERSION:  ${{ secrets.GARMIN_SOFTWARE_VERSION }}
+        run: python -m fit_file_faker.form_sync.pipeline
