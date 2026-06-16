@@ -262,8 +262,8 @@ class FitEditor:
 
         Note:
             Supported manufacturers include: `DEVELOPMENT` (TrainingPeaks Virtual),
-            `ZWIFT`, `WAHOO_FITNESS`, `PEAKSWARE`, `HAMMERHEAD`, `COROS`, and
-            `MYWHOOSH` (`331`).
+            `ZWIFT`, `WAHOO_FITNESS`, `PEAKSWARE`, `HAMMERHEAD`, `COROS`,
+            `FORM`, and `MYWHOOSH` (`331`).
         """
         if manufacturer is None:
             return False
@@ -274,6 +274,7 @@ class FitEditor:
             Manufacturer.PEAKSWARE.value,
             Manufacturer.HAMMERHEAD.value,
             Manufacturer.COROS.value,
+            Manufacturer.FORM.value,
             331,  # MYWHOOSH is unknown to fit_tools
         ]
 
@@ -305,6 +306,7 @@ class FitEditor:
             Manufacturer.PEAKSWARE.value,
             Manufacturer.HAMMERHEAD.value,
             Manufacturer.COROS.value,
+            Manufacturer.FORM.value,
             331,  # MYWHOOSH is unknown to fit_tools
         ]
 
