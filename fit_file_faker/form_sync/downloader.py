@@ -41,6 +41,16 @@ def download_zip(url: str, dest_dir: Path) -> Path:
             response=response,
         )
 
+    if not response.ok:
+        # S3 returns a descriptive XML body on error (e.g. AuthorizationQuery
+        # ParametersError, RequestTimeTooSkewed). Surface it so the real cause
+        # is visible in the logs instead of a bare status code.
+        body = (response.text or "")[:1000]
+        _logger.error(
+            f"S3 download failed with HTTP {response.status_code}. "
+            f"Response body:\n{body}"
+        )
+
     response.raise_for_status()
 
     zip_path = dest_dir / "form_export.zip"
