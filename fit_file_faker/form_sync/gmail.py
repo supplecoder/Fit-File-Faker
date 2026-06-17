@@ -108,7 +108,10 @@ def fetch_email(conn: imaplib.IMAP4_SSL, msg_id: str) -> Message:
     Raises:
         RuntimeError: If the IMAP fetch command fails.
     """
-    status, data = conn.fetch(msg_id, "(RFC822)")
+    # Use BODY.PEEK[] rather than RFC822: a plain RFC822 fetch implicitly sets
+    # the \Seen flag, which would mark the email read just by reading it. We
+    # want the read flag controlled solely by mark_as_read() on success.
+    status, data = conn.fetch(msg_id, "(BODY.PEEK[])")
     if status != "OK":
         raise RuntimeError(f"IMAP fetch failed for message {msg_id} (status: {status})")
     return email.message_from_bytes(data[0][1])

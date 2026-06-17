@@ -28,6 +28,15 @@ import requests
 _logger = logging.getLogger(__name__)
 
 
+class ExpiredLinkError(RuntimeError):
+    """The FORM presigned link's temporary credentials have expired.
+
+    Distinct from a generic download error because it cannot be retried —
+    the caller should mark the email read (no point re-running) and tell the
+    user to re-export from the FORM app.
+    """
+
+
 def _redact_url(url: str) -> str:
     """Return scheme://host/path with the (sensitive) query string removed."""
     parts = urlsplit(url)
@@ -69,12 +78,19 @@ def download_zip(url: str, dest_dir: Path) -> Path:
         # AuthorizationQueryParametersError). Parse out only Code/Message so
         # we never log the security token echoed back in the body.
         s3_error = _parse_s3_error(response.text)
-        raise RuntimeError(
+        base_msg = (
             f"S3 download failed with HTTP {response.status_code} "
-            f"[{s3_error}] for {_redact_url(url)}. "
-            "If this is 'ExpiredToken' the FORM link's temporary credentials "
-            "have expired — re-export from the FORM app to get a fresh link."
+            f"[{s3_error}] for {_redact_url(url)}."
         )
+
+        # An expired link is unrecoverable — flag it distinctly so the pipeline
+        # can mark the email read instead of retrying forever.
+        if response.status_code == 403 or "ExpiredToken" in s3_error:
+            raise ExpiredLinkError(
+                base_msg + " The FORM link's temporary credentials have expired"
+                " — re-export from the FORM app to get a fresh link."
+            )
+        raise RuntimeError(base_msg)
 
     zip_path = dest_dir / "form_export.zip"
     zip_path.write_bytes(response.content)

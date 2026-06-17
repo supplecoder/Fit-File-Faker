@@ -20,10 +20,11 @@ independently, so one failing email does not prevent newer emails from being
 processed — but if any email fails, the overall run still fails so the
 failure is never silent.
 
-Note: if an email is genuinely unprocessable (e.g. its S3 link has expired
-after 48 hours), it will keep failing on every run until you re-export from
-the FORM app or manually mark/delete the email. This is intentional — loud,
-visible failures are preferred over silently skipping data.
+Special case — expired links: FORM links are signed with short-lived AWS
+credentials, so an old email's link may already be dead (HTTP 400
+"ExpiredToken"). Retrying can never succeed, so such an email is marked read
+(to stop it looping forever) but the run still fails once, so you get a single
+notification telling you to re-export from the FORM app.
 
 Environment variables (all required unless noted):
     FFF_GMAIL_ADDRESS           Gmail address to monitor
@@ -133,7 +134,8 @@ def run() -> None:
 
         # Process each email independently. A failure on one email is recorded
         # and we continue to the next, so one bad email never blocks newer ones.
-        # The email is left unread on failure so it stays visible and retries.
+        # A retryable failure leaves the email unread; an expired link is marked
+        # read (see _process_email). Either way the run fails at the end.
         for msg_id in msg_ids:
             try:
                 garmin_tokens = _process_email(
@@ -160,8 +162,8 @@ def run() -> None:
     if failed_ids:
         raise RuntimeError(
             f"{len(failed_ids)} of the FORM email(s) failed to process: "
-            f"{failed_ids}. They were left unread and will be retried on the "
-            "next run. Check the logs above for the cause."
+            f"{failed_ids}. See the per-email logs above for the cause and "
+            "whether each was left unread for retry or marked read (expired link)."
         )
 
 
@@ -184,8 +186,9 @@ def _process_email(
     """Process a single FORM export email end-to-end.
 
     Raises on any failure (no .fit files, download error, upload error, etc.)
-    so the caller can record the failure, leave the email unread, and fail the
-    overall run. The email is marked as read only on full success.
+    so the caller can record it and fail the overall run. On a retryable failure
+    the email is left unread; on an expired link it is marked read (retrying is
+    futile). On full success it is marked read.
 
     Returns the refreshed Garmin token string so the caller can pass it into
     the next iteration without making redundant API calls.
@@ -212,10 +215,20 @@ def _process_email(
         tmp_path = Path(tmp)
 
         # Step 2: Download ZIP archive and extract FIT files.
-        # download_zip raises on any HTTP error (the S3 XML error body is
-        # logged by the downloader for diagnosis); we let it propagate so the
-        # email stays unread and the run fails loudly.
-        zip_path = downloader.download_zip(s3_url, tmp_path)
+        # A generic download error propagates with the email left UNREAD, so it
+        # is retried on the next run. An expired link is unrecoverable, so we
+        # mark it READ (retrying is futile) before re-raising — the run still
+        # fails so you get one notification telling you to re-export.
+        try:
+            zip_path = downloader.download_zip(s3_url, tmp_path)
+        except downloader.ExpiredLinkError:
+            _logger.error(
+                f"Email {msg_id}: the FORM download link has expired and cannot "
+                "be retried. Marking it as read. Re-export from the FORM app to "
+                "sync this swim."
+            )
+            gmail.mark_as_read(conn, msg_id)
+            raise
 
         fit_files = downloader.extract_fit_files(zip_path, tmp_path)
         if not fit_files:
