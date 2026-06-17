@@ -32,6 +32,6 @@ jobs:
           FFF_GARMIN_TOKENS:        ${{ secrets.FFF_GARMIN_TOKENS }}
           FFF_GH_PAT:               ${{ secrets.FFF_GH_PAT }}
           GITHUB_REPOSITORY:        ${{ github.repository }}
-          FFF_GARMIN_SERIAL_NUMBER: ${{ secrets.FFF_GARMIN_SERIAL_NUMBER }}
+          FFF_GARMIN_UNIT_ID:       ${{ secrets.FFF_GARMIN_UNIT_ID }}
           FFF_GARMIN_DEVICE_ID:     ${{ secrets.FFF_GARMIN_DEVICE_ID }}
         run: python -m fit_file_faker.form_sync.pipeline

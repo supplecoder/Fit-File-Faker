@@ -26,7 +26,9 @@ Environment variables (all required unless noted):
     FFF_GARMIN_TOKENS           Base64 token bundle (optional; empty on first run)
     FFF_GH_PAT                  GitHub PAT with secrets:write scope
     GITHUB_REPOSITORY           Set automatically by GitHub Actions (owner/repo)
-    FFF_GARMIN_SERIAL_NUMBER    Device Unit ID matching the physical Garmin device
+    FFF_GARMIN_UNIT_ID          Unit ID of the physical Garmin device (Settings →
+                                About → Unit ID). Named "serial_number" in the FIT
+                                spec, but is NOT the printed serial number.
     FFF_GARMIN_DEVICE_ID        Garmin product ID (e.g. 4315 = Forerunner 965).
                                 Software version is looked up automatically from the
                                 device registry; no separate version secret needed.
@@ -109,7 +111,8 @@ def run() -> None:
     garmin_tokens_b64   = os.environ.get("FFF_GARMIN_TOKENS", "").strip()
     gh_pat              = _require_env("FFF_GH_PAT")
     gh_repo             = _require_env("GITHUB_REPOSITORY")
-    serial_number       = int(_require_env("FFF_GARMIN_SERIAL_NUMBER"))
+    # FIT spec calls this field "serial_number" but it holds the Unit ID, not the printed serial
+    serial_number       = int(_require_env("FFF_GARMIN_UNIT_ID"))
     device_id           = int(_require_env("FFF_GARMIN_DEVICE_ID"))
     software_version    = _lookup_software_version(device_id)
 
