@@ -4,7 +4,7 @@ Entry point for the GitHub Actions workflow. Reads all configuration from
 environment variables (populated by GitHub Secrets), then processes any
 unread FORM export emails found in Gmail.
 
-Each email is processed atomically:
+Each email is processed independently:
   1. Fetch email, extract S3 URL
   2. Download ZIP archive, extract .fit files
   3. Rewrite each .fit to appear as the configured Garmin device
@@ -12,11 +12,18 @@ Each email is processed atomically:
   5. Persist refreshed Garmin tokens back to GitHub Secrets
   6. Mark email as read
 
-The email is only marked as read after all steps succeed. A failure at any
-earlier step leaves the email unread so the next scheduled run retries it
-automatically — with one exception: an expired S3 link (403) cannot be
-retried, so the email is marked read to prevent infinite retry loops, and
-the error is logged for manual review.
+Failure handling philosophy: an email is marked as read ONLY after all steps
+succeed. Any failure leaves the email unread (so it stays visible and is
+retried on the next run) and causes the workflow to exit non-zero, which
+triggers a GitHub Actions failure notification. Emails are processed
+independently, so one failing email does not prevent newer emails from being
+processed — but if any email fails, the overall run still fails so the
+failure is never silent.
+
+Note: if an email is genuinely unprocessable (e.g. its S3 link has expired
+after 48 hours), it will keep failing on every run until you re-export from
+the FORM app or manually mark/delete the email. This is intentional — loud,
+visible failures are preferred over silently skipping data.
 
 Environment variables (all required unless noted):
     FFF_GMAIL_ADDRESS           Gmail address to monitor
@@ -38,8 +45,6 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-
-import requests
 
 from fit_file_faker.config import SUPPLEMENTAL_GARMIN_DEVICES
 from fit_file_faker.form_sync import downloader, garmin, gmail
@@ -94,8 +99,9 @@ def run() -> None:
     Called by the GitHub Actions workflow as:
         python -m fit_file_faker.form_sync.pipeline
 
-    Exits cleanly (no exception) whether or not any emails were processed,
-    so the workflow always reports success unless there is an unexpected error.
+    Exits cleanly when there is nothing to do or every email succeeds. If any
+    email fails to process, raises at the end so the workflow exits non-zero
+    and GitHub sends a failure notification.
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -118,27 +124,45 @@ def run() -> None:
 
     # --- Check Gmail for unread FORM export emails --------------------------
     conn = gmail.connect(gmail_address, gmail_app_password)
+    failed_ids: list[str] = []
     try:
         msg_ids = gmail.search_form_emails(conn)
         if not msg_ids:
             _logger.info("No new FORM export emails — nothing to do")
             return
 
+        # Process each email independently. A failure on one email is recorded
+        # and we continue to the next, so one bad email never blocks newer ones.
+        # The email is left unread on failure so it stays visible and retries.
         for msg_id in msg_ids:
-            garmin_tokens = _process_email(
-                conn=conn,
-                msg_id=msg_id,
-                garmin_email=garmin_email,
-                garmin_password=garmin_password,
-                garmin_tokens=garmin_tokens,
-                device_id=device_id,
-                serial_number=serial_number,
-                software_version=software_version,
-                gh_pat=gh_pat,
-                gh_repo=gh_repo,
-            )
+            try:
+                garmin_tokens = _process_email(
+                    conn=conn,
+                    msg_id=msg_id,
+                    garmin_email=garmin_email,
+                    garmin_password=garmin_password,
+                    garmin_tokens=garmin_tokens,
+                    device_id=device_id,
+                    serial_number=serial_number,
+                    software_version=software_version,
+                    gh_pat=gh_pat,
+                    gh_repo=gh_repo,
+                )
+            except Exception:
+                # Log full traceback, leave the email unread, keep going
+                _logger.exception(f"Email {msg_id} failed to process")
+                failed_ids.append(msg_id)
     finally:
         gmail.disconnect(conn)
+
+    # If any email failed, fail the whole run so GitHub Actions sends a
+    # failure notification. Successful emails have already been marked read.
+    if failed_ids:
+        raise RuntimeError(
+            f"{len(failed_ids)} of the FORM email(s) failed to process: "
+            f"{failed_ids}. They were left unread and will be retried on the "
+            "next run. Check the logs above for the cause."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -159,8 +183,12 @@ def _process_email(
 ) -> str:
     """Process a single FORM export email end-to-end.
 
-    Returns the (possibly refreshed) Garmin token bundle so the caller can
-    pass it into the next iteration without making redundant API calls.
+    Raises on any failure (no .fit files, download error, upload error, etc.)
+    so the caller can record the failure, leave the email unread, and fail the
+    overall run. The email is marked as read only on full success.
+
+    Returns the refreshed Garmin token string so the caller can pass it into
+    the next iteration without making redundant API calls.
     """
     _logger.info(f"--- Processing email {msg_id} ---")
 
@@ -168,9 +196,9 @@ def _process_email(
     msg = gmail.fetch_email(conn, msg_id)
     s3_url = gmail.extract_s3_url(msg)
     if not s3_url:
-        _logger.error(f"Email {msg_id}: could not extract S3 URL — skipping")
-        gmail.mark_as_read(conn, msg_id)
-        return garmin_tokens
+        raise RuntimeError(
+            f"Email {msg_id}: could not extract an S3 download URL from the email body"
+        )
 
     profile = build_profile(
         garmin_email=garmin_email,
@@ -183,27 +211,17 @@ def _process_email(
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
 
-        # Step 2: Download ZIP archive and extract FIT files
-        try:
-            zip_path = downloader.download_zip(s3_url, tmp_path)
-        except requests.HTTPError as e:
-            if "403" in str(e) or (hasattr(e, "response") and e.response is not None and e.response.status_code == 403):
-                # Presigned URL has expired — can't retry, mark read to stop looping
-                _logger.error(
-                    f"Email {msg_id}: S3 link has expired (403). "
-                    "Marking as read to prevent retry loops. "
-                    "Export again from the FORM app."
-                )
-                gmail.mark_as_read(conn, msg_id)
-            else:
-                _logger.error(f"Email {msg_id}: download failed — {e}")
-            return garmin_tokens
+        # Step 2: Download ZIP archive and extract FIT files.
+        # download_zip raises on any HTTP error (the S3 XML error body is
+        # logged by the downloader for diagnosis); we let it propagate so the
+        # email stays unread and the run fails loudly.
+        zip_path = downloader.download_zip(s3_url, tmp_path)
 
         fit_files = downloader.extract_fit_files(zip_path, tmp_path)
         if not fit_files:
-            _logger.error(f"Email {msg_id}: no .fit files in archive — skipping")
-            gmail.mark_as_read(conn, msg_id)
-            return garmin_tokens
+            raise RuntimeError(
+                f"Email {msg_id}: no .fit files found in the downloaded FORM archive"
+            )
 
         # Step 3 + 4: Rewrite each FIT file and upload to Garmin Connect
         for fit_path in fit_files:
