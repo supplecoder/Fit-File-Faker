@@ -25,16 +25,9 @@ from urllib.parse import urlsplit
 
 import requests
 
+from fit_file_faker.form_sync.errors import ExpiredLinkError, TransientError
+
 _logger = logging.getLogger(__name__)
-
-
-class ExpiredLinkError(RuntimeError):
-    """The FORM presigned link's temporary credentials have expired.
-
-    Distinct from a generic download error because it cannot be retried —
-    the caller should mark the email read (no point re-running) and tell the
-    user to re-export from the FORM app.
-    """
 
 
 def _redact_url(url: str) -> str:
@@ -67,11 +60,22 @@ def download_zip(url: str, dest_dir: Path) -> Path:
         Path to the downloaded ZIP file.
 
     Raises:
-        RuntimeError: If the download fails. The message includes the S3 error
-            code/message and a redacted URL, never the security token.
+        ExpiredLinkError: If the link's temporary credentials have expired
+            (HTTP 403 / S3 ExpiredToken). Unrecoverable.
+        TransientError: For network errors or 5xx responses — worth retrying.
+        RuntimeError: For other permanent failures (e.g. 4xx). The message
+            includes the S3 error code/message and a redacted URL, never the
+            security token.
     """
     _logger.info(f"Downloading FORM export archive from {_redact_url(url)}")
-    response = requests.get(url, timeout=60)
+
+    # Network-level failures (DNS, connection reset, timeout) are transient.
+    try:
+        response = requests.get(url, timeout=60)
+    except requests.exceptions.RequestException as e:
+        raise TransientError(
+            f"Network error downloading {_redact_url(url)}: {e.__class__.__name__}"
+        ) from e
 
     if not response.ok:
         # S3 returns descriptive XML on error (e.g. ExpiredToken,
@@ -90,6 +94,9 @@ def download_zip(url: str, dest_dir: Path) -> Path:
                 base_msg + " The FORM link's temporary credentials have expired"
                 " — re-export from the FORM app to get a fresh link."
             )
+        # Server-side errors are worth a retry; other 4xx are permanent.
+        if response.status_code >= 500:
+            raise TransientError(base_msg + " (server error — will retry)")
         raise RuntimeError(base_msg)
 
     zip_path = dest_dir / "form_export.zip"

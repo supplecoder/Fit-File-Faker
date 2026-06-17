@@ -50,6 +50,7 @@ from pathlib import Path
 from fit_file_faker.config import SUPPLEMENTAL_GARMIN_DEVICES
 from fit_file_faker.form_sync import downloader, garmin, gmail
 from fit_file_faker.form_sync import github as gh
+from fit_file_faker.form_sync.errors import ExpiredLinkError, TransientError
 from fit_file_faker.form_sync.processor import build_profile, process_fit_file
 
 _logger = logging.getLogger(__name__)
@@ -151,8 +152,9 @@ def run() -> None:
                     gh_repo=gh_repo,
                 )
             except Exception:
-                # Log full traceback, leave the email unread, keep going
-                _logger.exception(f"Email {msg_id} failed to process")
+                # _process_email has already logged the cause and applied the
+                # correct read/unread treatment. Just record the failure and
+                # keep processing other emails.
                 failed_ids.append(msg_id)
     finally:
         gmail.disconnect(conn)
@@ -185,16 +187,79 @@ def _process_email(
 ) -> str:
     """Process a single FORM export email end-to-end.
 
-    Raises on any failure (no .fit files, download error, upload error, etc.)
-    so the caller can record it and fail the overall run. On a retryable failure
-    the email is left unread; on an expired link it is marked read (retrying is
-    futile). On full success it is marked read.
+    Raises on any failure so the caller records it and the run fails once
+    (sending a single notification). The email's read flag is decided here:
+
+      - success                  → marked read
+      - TransientError           → left UNREAD (retried next run)
+      - ExpiredLinkError / other → marked read (retrying is futile, so we stop
+                                    it looping and spamming notifications)
 
     Returns the refreshed Garmin token string so the caller can pass it into
     the next iteration without making redundant API calls.
     """
     _logger.info(f"--- Processing email {msg_id} ---")
 
+    try:
+        garmin_tokens = _sync_email(
+            conn=conn,
+            msg_id=msg_id,
+            garmin_email=garmin_email,
+            garmin_password=garmin_password,
+            garmin_tokens=garmin_tokens,
+            device_id=device_id,
+            serial_number=serial_number,
+            software_version=software_version,
+            gh_pat=gh_pat,
+            gh_repo=gh_repo,
+        )
+    except TransientError as e:
+        # Worth retrying — leave the email UNREAD so the next run picks it up.
+        _logger.warning(
+            f"Email {msg_id}: transient error, leaving UNREAD to retry next run — {e}"
+        )
+        raise
+    except ExpiredLinkError:
+        # Dead link — mark read so it stops looping; user must re-export.
+        _logger.error(
+            f"Email {msg_id}: FORM download link has expired (cannot retry). "
+            "Marking read — re-export from the FORM app to sync this swim."
+        )
+        gmail.mark_as_read(conn, msg_id)
+        raise
+    except Exception:
+        # Permanent/unknown failure — mark read to avoid retrying a broken
+        # email every run (wasted Actions minutes + repeated notifications).
+        _logger.exception(
+            f"Email {msg_id}: unrecoverable error. Marking read to stop retries; "
+            "investigate the traceback above."
+        )
+        gmail.mark_as_read(conn, msg_id)
+        raise
+
+    # Success
+    gmail.mark_as_read(conn, msg_id)
+    _logger.info(f"--- Email {msg_id} complete ---")
+    return garmin_tokens
+
+
+def _sync_email(
+    conn,
+    msg_id: str,
+    garmin_email: str,
+    garmin_password: str,
+    garmin_tokens: str,
+    device_id: int,
+    serial_number: int,
+    software_version: int,
+    gh_pat: str,
+    gh_repo: str,
+) -> str:
+    """Do the actual work for one email; raise on any failure.
+
+    Knows nothing about the email read flag — that policy lives in
+    _process_email, which classifies the raised exception.
+    """
     # Step 1: Extract the S3 download URL from the email body
     msg = gmail.fetch_email(conn, msg_id)
     s3_url = gmail.extract_s3_url(msg)
@@ -214,21 +279,9 @@ def _process_email(
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
 
-        # Step 2: Download ZIP archive and extract FIT files.
-        # A generic download error propagates with the email left UNREAD, so it
-        # is retried on the next run. An expired link is unrecoverable, so we
-        # mark it READ (retrying is futile) before re-raising — the run still
-        # fails so you get one notification telling you to re-export.
-        try:
-            zip_path = downloader.download_zip(s3_url, tmp_path)
-        except downloader.ExpiredLinkError:
-            _logger.error(
-                f"Email {msg_id}: the FORM download link has expired and cannot "
-                "be retried. Marking it as read. Re-export from the FORM app to "
-                "sync this swim."
-            )
-            gmail.mark_as_read(conn, msg_id)
-            raise
+        # Step 2: Download ZIP archive and extract FIT files. download_zip
+        # raises ExpiredLinkError / TransientError / RuntimeError as appropriate.
+        zip_path = downloader.download_zip(s3_url, tmp_path)
 
         fit_files = downloader.extract_fit_files(zip_path, tmp_path)
         if not fit_files:
@@ -248,10 +301,6 @@ def _process_email(
 
     # Step 5: Persist refreshed tokens to GitHub Secrets
     gh.update_secret(gh_repo, "FFF_GARMIN_TOKENS", garmin_tokens, gh_pat)
-
-    # Step 6: Mark email as read — only reached on full success
-    gmail.mark_as_read(conn, msg_id)
-    _logger.info(f"--- Email {msg_id} complete ---")
 
     return garmin_tokens
 

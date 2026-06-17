@@ -25,6 +25,8 @@ from pathlib import Path
 
 from garminconnect import Garmin, GarminConnectConnectionError
 
+from fit_file_faker.form_sync.errors import TransientError
+
 _logger = logging.getLogger(__name__)
 
 
@@ -87,7 +89,11 @@ def upload_fit(
                 "activity already exists, continuing"
             )
         else:
-            raise
+            # Upload failures are typically server-side/transient (rate limits,
+            # outages) — flag as retryable so the email is left unread.
+            raise TransientError(
+                f"Garmin upload failed for {fit_path.name}: {e}"
+            ) from e
 
     # Return the refreshed token string for persistence
     return client.client.dumps()
