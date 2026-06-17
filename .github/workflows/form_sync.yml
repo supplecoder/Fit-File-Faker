@@ -2,8 +2,10 @@ name: FORM → Garmin Sync
 
 on:
   schedule:
-    # Run every 30 minutes
-    - cron: "*/30 * * * *"
+    # Run every 15 minutes. FORM links are signed with short-lived (~1h) AWS
+    # STS credentials, so we poll often enough to fetch a fresh export well
+    # before its temporary token expires.
+    - cron: "*/15 * * * *"
   workflow_dispatch:  # Allow manual trigger from GitHub Actions UI
 
 jobs:
