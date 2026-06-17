@@ -1,57 +1,80 @@
 """Download FORM export archive from S3 and extract FIT files.
 
 FORM export emails contain a presigned S3 URL that points to a ZIP archive.
-The link expires after 48 hours. With 30-minute polling this is never an issue
-in practice, but we surface a clear error if the link has expired rather than
-silently failing.
+The URL's query string advertises a 48-hour expiry (X-Amz-Expires), but FORM
+signs it with temporary AWS STS credentials (an "ASIA..." access key) that
+expire much sooner — often within ~1 hour. So the link's real lifespan is the
+shorter of the two. With 30-minute polling a fresh export is normally fetched
+well within that window; an older export may already be dead (HTTP 400
+"ExpiredToken"), in which case it must be re-exported from the FORM app.
+
+SECURITY: presigned URLs embed a temporary credential and signature in the
+query string. On a public repo, Actions logs are world-readable, so we never
+log the full URL or the S3 error body verbatim (the body echoes the security
+token). Only the host+path and the S3 error <Code>/<Message> are logged.
 
 The archive may contain one or more .fit files. All are extracted and returned
 so the pipeline can process each one independently.
 """
 
 import logging
+import re
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
 _logger = logging.getLogger(__name__)
 
 
+def _redact_url(url: str) -> str:
+    """Return scheme://host/path with the (sensitive) query string removed."""
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}{parts.path}"
+
+
+def _parse_s3_error(body: str) -> str:
+    """Extract just the <Code> and <Message> from an S3 XML error response.
+
+    Avoids logging the full body, which echoes the request's security token
+    (e.g. inside a <Token-0> element).
+    """
+    code = re.search(r"<Code>(.*?)</Code>", body or "")
+    message = re.search(r"<Message>(.*?)</Message>", body or "")
+    code_str = code.group(1) if code else "Unknown"
+    message_str = message.group(1) if message else "(no message)"
+    return f"{code_str}: {message_str}"
+
+
 def download_zip(url: str, dest_dir: Path) -> Path:
     """Download the FORM export ZIP archive from an S3 presigned URL.
 
     Args:
-        url: Presigned S3 URL from the FORM export email. Expires in 48 hours.
+        url: Presigned S3 URL from the FORM export email.
         dest_dir: Directory to write the downloaded archive into.
 
     Returns:
         Path to the downloaded ZIP file.
 
     Raises:
-        requests.HTTPError: If the download fails (including 403 if link expired).
+        RuntimeError: If the download fails. The message includes the S3 error
+            code/message and a redacted URL, never the security token.
     """
-    _logger.info("Downloading FORM export archive from S3")
+    _logger.info(f"Downloading FORM export archive from {_redact_url(url)}")
     response = requests.get(url, timeout=60)
 
-    if response.status_code == 403:
-        raise requests.HTTPError(
-            "S3 presigned URL returned 403 — the download link has likely expired "
-            "(links expire after 48 hours). The email will remain unread for manual review.",
-            response=response,
-        )
-
     if not response.ok:
-        # S3 returns a descriptive XML body on error (e.g. AuthorizationQuery
-        # ParametersError, RequestTimeTooSkewed). Surface it so the real cause
-        # is visible in the logs instead of a bare status code.
-        body = (response.text or "")[:1000]
-        _logger.error(
-            f"S3 download failed with HTTP {response.status_code}. "
-            f"Response body:\n{body}"
+        # S3 returns descriptive XML on error (e.g. ExpiredToken,
+        # AuthorizationQueryParametersError). Parse out only Code/Message so
+        # we never log the security token echoed back in the body.
+        s3_error = _parse_s3_error(response.text)
+        raise RuntimeError(
+            f"S3 download failed with HTTP {response.status_code} "
+            f"[{s3_error}] for {_redact_url(url)}. "
+            "If this is 'ExpiredToken' the FORM link's temporary credentials "
+            "have expired — re-export from the FORM app to get a fresh link."
         )
-
-    response.raise_for_status()
 
     zip_path = dest_dir / "form_export.zip"
     zip_path.write_bytes(response.content)
