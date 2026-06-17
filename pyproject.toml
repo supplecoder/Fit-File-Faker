@@ -41,6 +41,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-xdist>=3.5.0",
     "pre-commit>=4.0.0",
+    "PyNaCl>=1.5.0",  # required by form_sync tests (github secrets encryption)
 ]
 docs = [
     "mkdocs>=1.6.0",
