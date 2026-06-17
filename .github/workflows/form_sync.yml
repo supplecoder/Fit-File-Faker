@@ -25,14 +25,14 @@ jobs:
 
       - name: Run FORM sync pipeline
         env:
-          GMAIL_ADDRESS:            ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
-          GARMIN_EMAIL:             ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD:          ${{ secrets.GARMIN_PASSWORD }}
-          GARMIN_TOKENS:            ${{ secrets.GARMIN_TOKENS }}
-          GH_PAT:                   ${{ secrets.GH_PAT }}
+          GMAIL_ADDRESS:            ${{ secrets.FFF_GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.FFF_GMAIL_APP_PASSWORD }}
+          GARMIN_EMAIL:             ${{ secrets.FFF_GARMIN_EMAIL }}
+          GARMIN_PASSWORD:          ${{ secrets.FFF_GARMIN_PASSWORD }}
+          GARMIN_TOKENS:            ${{ secrets.FFF_GARMIN_TOKENS }}
+          GH_PAT:                   ${{ secrets.FFF_GH_PAT }}
           GITHUB_REPOSITORY:        ${{ github.repository }}
-          GARMIN_SERIAL_NUMBER:     ${{ secrets.GARMIN_SERIAL_NUMBER }}
-          GARMIN_DEVICE_ID:         ${{ secrets.GARMIN_DEVICE_ID }}
-          GARMIN_SOFTWARE_VERSION:  ${{ secrets.GARMIN_SOFTWARE_VERSION }}
+          GARMIN_SERIAL_NUMBER:     ${{ secrets.FFF_GARMIN_SERIAL_NUMBER }}
+          GARMIN_DEVICE_ID:         ${{ secrets.FFF_GARMIN_DEVICE_ID }}
+          GARMIN_SOFTWARE_VERSION:  ${{ secrets.FFF_GARMIN_SOFTWARE_VERSION }}
         run: python -m fit_file_faker.form_sync.pipeline

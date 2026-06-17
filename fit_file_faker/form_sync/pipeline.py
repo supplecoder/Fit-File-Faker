@@ -19,16 +19,16 @@ retried, so the email is marked read to prevent infinite retry loops, and
 the error is logged for manual review.
 
 Environment variables (all required unless noted):
-    GMAIL_ADDRESS           Gmail address to monitor
-    GMAIL_APP_PASSWORD      Google App Password for IMAP access
-    GARMIN_EMAIL            Garmin Connect account email
-    GARMIN_PASSWORD         Garmin Connect account password
-    GARMIN_TOKENS           Base64 token bundle (optional; empty on first run)
-    GH_PAT                  GitHub PAT with secrets:write scope
-    GITHUB_REPOSITORY       Set automatically by GitHub Actions (owner/repo)
-    GARMIN_SERIAL_NUMBER    Device Unit ID matching the physical Garmin device
-    GARMIN_DEVICE_ID        Garmin product ID (default: 4315 = Forerunner 965)
-    GARMIN_SOFTWARE_VERSION FIT firmware integer (default: 2709 = v27.09)
+    FFF_GMAIL_ADDRESS           Gmail address to monitor
+    FFF_GMAIL_APP_PASSWORD      Google App Password for IMAP access
+    FFF_GARMIN_EMAIL            Garmin Connect account email
+    FFF_GARMIN_PASSWORD         Garmin Connect account password
+    FFF_GARMIN_TOKENS           Base64 token bundle (optional; empty on first run)
+    FFF_GH_PAT                  GitHub PAT with secrets:write scope
+    GITHUB_REPOSITORY           Set automatically by GitHub Actions (owner/repo)
+    FFF_GARMIN_SERIAL_NUMBER    Device Unit ID matching the physical Garmin device
+    FFF_GARMIN_DEVICE_ID        Garmin product ID (default: 4315 = Forerunner 965)
+    FFF_GARMIN_SOFTWARE_VERSION FIT firmware integer (default: 2709 = v27.09)
 """
 
 import logging
@@ -80,16 +80,16 @@ def run() -> None:
     )
 
     # --- Load configuration from environment (GitHub Secrets) ---------------
-    gmail_address       = _require_env("GMAIL_ADDRESS")
-    gmail_app_password  = _require_env("GMAIL_APP_PASSWORD")
-    garmin_email        = _require_env("GARMIN_EMAIL")
-    garmin_password     = _require_env("GARMIN_PASSWORD")
-    garmin_tokens_b64   = os.environ.get("GARMIN_TOKENS", "").strip()
-    gh_pat              = _require_env("GH_PAT")
+    gmail_address       = _require_env("FFF_GMAIL_ADDRESS")
+    gmail_app_password  = _require_env("FFF_GMAIL_APP_PASSWORD")
+    garmin_email        = _require_env("FFF_GARMIN_EMAIL")
+    garmin_password     = _require_env("FFF_GARMIN_PASSWORD")
+    garmin_tokens_b64   = os.environ.get("FFF_GARMIN_TOKENS", "").strip()
+    gh_pat              = _require_env("FFF_GH_PAT")
     gh_repo             = _require_env("GITHUB_REPOSITORY")
-    serial_number       = int(_require_env("GARMIN_SERIAL_NUMBER"))
-    device_id           = int(os.environ.get("GARMIN_DEVICE_ID", "4315"))
-    software_version    = int(os.environ.get("GARMIN_SOFTWARE_VERSION", "2709"))
+    serial_number       = int(_require_env("FFF_GARMIN_SERIAL_NUMBER"))
+    device_id           = int(os.environ.get("FFF_GARMIN_DEVICE_ID", "4315"))
+    software_version    = int(os.environ.get("FFF_GARMIN_SOFTWARE_VERSION", "2709"))
 
     # --- Check Gmail for unread FORM export emails --------------------------
     conn = gmail.connect(gmail_address, gmail_app_password)
@@ -191,7 +191,7 @@ def _process_email(
             )
 
     # Step 5: Persist refreshed tokens to GitHub Secrets
-    gh.update_secret(gh_repo, "GARMIN_TOKENS", garmin_tokens_b64, gh_pat)
+    gh.update_secret(gh_repo, "FFF_GARMIN_TOKENS", garmin_tokens_b64, gh_pat)
 
     # Step 6: Mark email as read — only reached on full success
     gmail.mark_as_read(conn, msg_id)
