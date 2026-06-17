@@ -159,13 +159,21 @@ This is what makes it hands-off. The script lives at
    requires; it's a different permission than `FFF_GH_PAT`).
 2. Go to <https://script.google.com> → **New project**. Replace the default
    `Code.gs` contents with the entire `form_gmail_trigger.gs` file.
-3. **Project Settings (⚙️) → Script Properties** → add:
+3. **Enable the Gmail advanced service**: in the editor, click **Services (+)**
+   in the left sidebar → choose **Gmail API** → **Add** (identifier `Gmail`).
+4. **Pin the minimal scopes**: Project Settings (⚙️) → tick *"Show
+   'appsscript.json' manifest file in editor"*. Open `appsscript.json` and
+   replace its contents with [`scripts/appsscript.json`](../../scripts/appsscript.json)
+   from this repo. This restricts the script to **read-only** Gmail access
+   (`gmail.readonly`) instead of full mail access.
+5. **Project Settings (⚙️) → Script Properties** → add:
    - `GITHUB_PAT` = the PAT from step 6.1
    - `GITHUB_REPO` = `your-username/your-repo`
-4. In the editor, select **`installTrigger`** → **Run**. Approve the Gmail +
-   external-request permissions when prompted. This creates a trigger that runs
-   every 5 minutes (`everyMinutes()` accepts 1, 5, 10, 15, or 30).
-5. Test: select **`checkFormEmails`** → **Run**, then check **View → Logs**.
+6. In the editor, select **`installTrigger`** → **Run**. Approve permissions
+   when prompted — the consent screen should now ask only to *"Read your email
+   messages and settings"*. This creates a trigger that runs every 5 minutes
+   (`everyMinutes()` accepts 1, 5, 10, 15, or 30).
+7. Test: select **`checkFormEmails`** → **Run**, then check **View → Logs**.
    With an unread FORM email present it logs "dispatching workflow" and a run
    appears in your Actions tab.
 

@@ -19,19 +19,30 @@
  *     on success. A failed email stays unread, so the next time this script runs
  *     it dispatches again — giving automatic retries.
  *
+ * Permissions: this script only READS Gmail (search). It uses the advanced
+ * Gmail service with the narrow `gmail.readonly` scope, declared in the
+ * accompanying appsscript.json manifest — NOT GmailApp, which would force the
+ * broad "read, compose, send, and delete" scope. The Python pipeline (not this
+ * script) is what marks emails as read, over IMAP.
+ *
  * SETUP (one time):
  *   1. Go to https://script.google.com and create a New Project.
  *   2. Paste this entire file in, replacing the default Code.gs contents.
- *   3. Project Settings (gear icon) → Script Properties → add two properties:
- *        GITHUB_PAT   = a GitHub fine-grained PAT for supplecoder/Fit-File-Faker
- *                       with "Contents: Read and write" permission
- *        GITHUB_REPO  = supplecoder/Fit-File-Faker
- *   4. Run the `installTrigger` function once (select it in the toolbar → Run).
- *      Approve the Gmail + external-request permissions when prompted.
- *      This creates a time-based trigger that runs `checkFormEmails` every
- *      5 minutes. (Change the interval inside installTrigger if you like;
- *      Apps Script supports down to every 1 minute.)
- *   5. Done. To test immediately, run `checkFormEmails` manually.
+ *   3. Enable the Gmail advanced service: in the editor, click "Services" (+)
+ *      in the left sidebar, choose "Gmail API", and add it (identifier: Gmail).
+ *   4. Show and edit the manifest: Project Settings (gear icon) → tick
+ *      "Show 'appsscript.json' manifest file in editor". Open appsscript.json
+ *      and replace its contents with the appsscript.json from this repo's
+ *      scripts/ folder (it pins the gmail.readonly + external_request scopes).
+ *   5. Project Settings → Script Properties → add two properties:
+ *        GITHUB_PAT   = a GitHub fine-grained PAT for your repo with
+ *                       "Contents: Read and write" permission
+ *        GITHUB_REPO  = your-username/your-repo
+ *   6. Run the `installTrigger` function once (select it in the toolbar → Run).
+ *      Approve the permissions when prompted — the consent screen should now
+ *      ask only to "Read your email messages and settings". This creates a
+ *      time-based trigger that runs `checkFormEmails` every 5 minutes.
+ *   7. Done. To test immediately, run `checkFormEmails` manually.
  *
  * Security note: the PAT lives only in this script's Script Properties (in your
  * Google account), never in the public GitHub repo.
@@ -48,14 +59,18 @@ var DISPATCH_EVENT_TYPE = 'form-export-ready';
  */
 function checkFormEmails() {
   var query = 'is:unread from:(' + FORM_SENDER + ') subject:("' + FORM_SUBJECT + '")';
-  var threads = GmailApp.search(query, 0, 10);
 
-  if (threads.length === 0) {
+  // Uses the advanced Gmail service (Gmail API) under the gmail.readonly scope,
+  // rather than GmailApp (which would require full mail access).
+  var resp = Gmail.Users.Messages.list('me', { q: query, maxResults: 10 });
+  var count = (resp && resp.messages) ? resp.messages.length : 0;
+
+  if (count === 0) {
     Logger.log('No unread FORM export emails — nothing to dispatch.');
     return;
   }
 
-  Logger.log('Found ' + threads.length + ' unread FORM email(s) — dispatching workflow.');
+  Logger.log('Found ' + count + ' unread FORM email(s) — dispatching workflow.');
   dispatchWorkflow();
 }
 
