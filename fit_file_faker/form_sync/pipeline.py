@@ -23,7 +23,7 @@ Environment variables (all required unless noted):
     FFF_GMAIL_APP_PASSWORD      Google App Password for IMAP access
     FFF_GARMIN_EMAIL            Garmin Connect account email
     FFF_GARMIN_PASSWORD         Garmin Connect account password
-    FFF_GARMIN_TOKENS           Base64 token bundle (optional; empty on first run)
+    FFF_GARMIN_TOKENS           Garmin session token string (optional; empty on first run)
     FFF_GH_PAT                  GitHub PAT with secrets:write scope
     GITHUB_REPOSITORY           Set automatically by GitHub Actions (owner/repo)
     FFF_GARMIN_UNIT_ID          Unit ID of the physical Garmin device (Settings →
@@ -108,7 +108,7 @@ def run() -> None:
     gmail_app_password  = _require_env("FFF_GMAIL_APP_PASSWORD")
     garmin_email        = _require_env("FFF_GARMIN_EMAIL")
     garmin_password     = _require_env("FFF_GARMIN_PASSWORD")
-    garmin_tokens_b64   = os.environ.get("FFF_GARMIN_TOKENS", "").strip()
+    garmin_tokens   = os.environ.get("FFF_GARMIN_TOKENS", "").strip()
     gh_pat              = _require_env("FFF_GH_PAT")
     gh_repo             = _require_env("GITHUB_REPOSITORY")
     # FIT spec calls this field "serial_number" but it holds the Unit ID, not the printed serial
@@ -125,12 +125,12 @@ def run() -> None:
             return
 
         for msg_id in msg_ids:
-            garmin_tokens_b64 = _process_email(
+            garmin_tokens = _process_email(
                 conn=conn,
                 msg_id=msg_id,
                 garmin_email=garmin_email,
                 garmin_password=garmin_password,
-                garmin_tokens_b64=garmin_tokens_b64,
+                garmin_tokens=garmin_tokens,
                 device_id=device_id,
                 serial_number=serial_number,
                 software_version=software_version,
@@ -150,7 +150,7 @@ def _process_email(
     msg_id: str,
     garmin_email: str,
     garmin_password: str,
-    garmin_tokens_b64: str,
+    garmin_tokens: str,
     device_id: int,
     serial_number: int,
     software_version: int,
@@ -170,7 +170,7 @@ def _process_email(
     if not s3_url:
         _logger.error(f"Email {msg_id}: could not extract S3 URL — skipping")
         gmail.mark_as_read(conn, msg_id)
-        return garmin_tokens_b64
+        return garmin_tokens
 
     profile = build_profile(
         garmin_email=garmin_email,
@@ -197,32 +197,32 @@ def _process_email(
                 gmail.mark_as_read(conn, msg_id)
             else:
                 _logger.error(f"Email {msg_id}: download failed — {e}")
-            return garmin_tokens_b64
+            return garmin_tokens
 
         fit_files = downloader.extract_fit_files(zip_path, tmp_path)
         if not fit_files:
             _logger.error(f"Email {msg_id}: no .fit files in archive — skipping")
             gmail.mark_as_read(conn, msg_id)
-            return garmin_tokens_b64
+            return garmin_tokens
 
         # Step 3 + 4: Rewrite each FIT file and upload to Garmin Connect
         for fit_path in fit_files:
             modified_path = process_fit_file(fit_path, profile)
-            garmin_tokens_b64 = garmin.upload_fit(
+            garmin_tokens = garmin.upload_fit(
                 fit_path=modified_path,
                 email=garmin_email,
                 password=garmin_password,
-                tokens_b64=garmin_tokens_b64,
+                tokens=garmin_tokens,
             )
 
     # Step 5: Persist refreshed tokens to GitHub Secrets
-    gh.update_secret(gh_repo, "FFF_GARMIN_TOKENS", garmin_tokens_b64, gh_pat)
+    gh.update_secret(gh_repo, "FFF_GARMIN_TOKENS", garmin_tokens, gh_pat)
 
     # Step 6: Mark email as read — only reached on full success
     gmail.mark_as_read(conn, msg_id)
     _logger.info(f"--- Email {msg_id} complete ---")
 
-    return garmin_tokens_b64
+    return garmin_tokens
 
 
 if __name__ == "__main__":

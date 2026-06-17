@@ -157,7 +157,7 @@ def extract_s3_url(msg: Message) -> Optional[str]:
 
 
 def mark_as_read(conn: imaplib.IMAP4_SSL, msg_id: str) -> None:
-    """Mark an email as read (\Seen) so it is excluded from future searches.
+    r"""Mark an email as read (\Seen) so it is excluded from future searches.
 
     This is called only after the full pipeline succeeds, so a failed run
     leaves the email unread and it will be retried on the next poll.
