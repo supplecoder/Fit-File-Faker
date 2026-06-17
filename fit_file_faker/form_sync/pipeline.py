@@ -27,8 +27,9 @@ Environment variables (all required unless noted):
     FFF_GH_PAT                  GitHub PAT with secrets:write scope
     GITHUB_REPOSITORY           Set automatically by GitHub Actions (owner/repo)
     FFF_GARMIN_SERIAL_NUMBER    Device Unit ID matching the physical Garmin device
-    FFF_GARMIN_DEVICE_ID        Garmin product ID (default: 4315 = Forerunner 965)
-    FFF_GARMIN_SOFTWARE_VERSION FIT firmware integer (default: 2709 = v27.09)
+    FFF_GARMIN_DEVICE_ID        Garmin product ID (default: 4315 = Forerunner 965).
+                                Software version is looked up automatically from the
+                                device registry; no separate version secret needed.
 """
 
 import logging
@@ -38,6 +39,7 @@ from pathlib import Path
 
 import requests
 
+from fit_file_faker.config import SUPPLEMENTAL_GARMIN_DEVICES
 from fit_file_faker.form_sync import downloader, garmin, gmail
 from fit_file_faker.form_sync import github as gh
 from fit_file_faker.form_sync.processor import build_profile, process_fit_file
@@ -58,6 +60,30 @@ def _require_env(name: str) -> str:
             "Add it as a GitHub Secret and reference it in the workflow YAML."
         )
     return value
+
+
+_DEFAULT_SOFTWARE_VERSION = 2709  # Forerunner 965 v27.09, matches default device_id 4315
+
+
+def _lookup_software_version(device_id: int) -> int:
+    """Return the latest known firmware version for a Garmin product ID.
+
+    Looks up the device in the supplemental registry. Falls back to the
+    default Forerunner 965 firmware if the device isn't found or has no
+    version recorded.
+    """
+    for device in SUPPLEMENTAL_GARMIN_DEVICES:
+        if device.product_id == device_id and device.software_version is not None:
+            _logger.info(
+                f"Device ID {device_id} ({device.name}): "
+                f"using firmware version {device.software_version}"
+            )
+            return device.software_version
+    _logger.warning(
+        f"Device ID {device_id} not found in registry or has no firmware version — "
+        f"falling back to {_DEFAULT_SOFTWARE_VERSION}"
+    )
+    return _DEFAULT_SOFTWARE_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +115,7 @@ def run() -> None:
     gh_repo             = _require_env("GITHUB_REPOSITORY")
     serial_number       = int(_require_env("FFF_GARMIN_SERIAL_NUMBER"))
     device_id           = int(os.environ.get("FFF_GARMIN_DEVICE_ID", "4315"))
-    software_version    = int(os.environ.get("FFF_GARMIN_SOFTWARE_VERSION", "2709"))
+    software_version    = _lookup_software_version(device_id)
 
     # --- Check Gmail for unread FORM export emails --------------------------
     conn = gmail.connect(gmail_address, gmail_app_password)
