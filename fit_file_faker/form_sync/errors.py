@@ -33,3 +33,12 @@ class ExpiredLinkError(FormSyncError):
     email is marked read (to stop it looping) and the user must re-export from
     the FORM app.
     """
+
+
+class GarminAuthError(FormSyncError):
+    """Garmin rejected the stored session token and a fresh login failed.
+
+    Retrying headlessly can't fix this (it usually means the token expired or
+    MFA is required). The user must re-seed the token locally. The email is
+    marked read, so they'll need to re-export from FORM afterwards.
+    """

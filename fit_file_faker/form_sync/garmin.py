@@ -25,7 +25,7 @@ from pathlib import Path
 
 from garminconnect import Garmin, GarminConnectConnectionError
 
-from fit_file_faker.form_sync.errors import TransientError
+from fit_file_faker.form_sync.errors import GarminAuthError, TransientError
 
 _logger = logging.getLogger(__name__)
 
@@ -57,26 +57,33 @@ def upload_fit(
         Refreshed token string to persist back to GitHub Secrets.
 
     Raises:
-        GarminConnectConnectionError: For non-409 upload failures.
+        GarminAuthError: If authentication fails (token rejected + fresh login
+            fails). Needs a local token re-seed; not retryable headlessly.
+        TransientError: For non-409 upload failures (likely server-side).
     """
     client = Garmin(email, password)
 
     # garminconnect treats a tokenstore longer than 512 chars as token data
     # passed directly (rather than a filesystem path), so we can hand it the
     # secret string verbatim.
-    if tokens and len(tokens) > 512:
-        try:
-            client.login(tokenstore=tokens)
-            _logger.info("Authenticated via stored Garmin token")
-        except Exception as e:
-            _logger.warning(
-                f"Stored token login failed ({e}) — attempting fresh password login. "
-                "If MFA is required this will fail; re-run seed_garmin_tokens.py locally."
-            )
+    try:
+        if tokens and len(tokens) > 512:
+            try:
+                client.login(tokenstore=tokens)
+                _logger.info("Authenticated via stored Garmin token")
+            except Exception as e:
+                _logger.warning(
+                    f"Stored token login failed ({e}) — attempting fresh password login. "
+                    "If MFA is required this will fail; re-run seed_garmin_tokens.py locally."
+                )
+                client.login()
+        else:
+            _logger.info("No stored token — performing fresh Garmin login")
             client.login()
-    else:
-        _logger.info("No stored token — performing fresh Garmin login")
-        client.login()
+    except Exception as e:
+        raise GarminAuthError(
+            f"Garmin authentication failed: {e}"
+        ) from e
 
     try:
         _logger.info(f"Uploading {fit_path.name} to Garmin Connect")

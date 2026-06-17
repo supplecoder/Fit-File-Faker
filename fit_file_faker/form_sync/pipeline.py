@@ -50,7 +50,11 @@ from pathlib import Path
 from fit_file_faker.config import SUPPLEMENTAL_GARMIN_DEVICES
 from fit_file_faker.form_sync import downloader, garmin, gmail
 from fit_file_faker.form_sync import github as gh
-from fit_file_faker.form_sync.errors import ExpiredLinkError, TransientError
+from fit_file_faker.form_sync.errors import (
+    ExpiredLinkError,
+    GarminAuthError,
+    TransientError,
+)
 from fit_file_faker.form_sync.processor import build_profile, process_fit_file
 
 _logger = logging.getLogger(__name__)
@@ -126,7 +130,7 @@ def run() -> None:
 
     # --- Check Gmail for unread FORM export emails --------------------------
     conn = gmail.connect(gmail_address, gmail_app_password)
-    failed_ids: list[str] = []
+    failures: list[tuple[str, Exception]] = []
     try:
         msg_ids = gmail.search_form_emails(conn)
         if not msg_ids:
@@ -151,22 +155,80 @@ def run() -> None:
                     gh_pat=gh_pat,
                     gh_repo=gh_repo,
                 )
-            except Exception:
+            except Exception as e:
                 # _process_email has already logged the cause and applied the
                 # correct read/unread treatment. Just record the failure and
                 # keep processing other emails.
-                failed_ids.append(msg_id)
+                failures.append((msg_id, e))
     finally:
         gmail.disconnect(conn)
 
-    # If any email failed, fail the whole run so GitHub Actions sends a
-    # failure notification. Successful emails have already been marked read.
-    if failed_ids:
+    # If any email failed, surface the required action prominently (GitHub job
+    # summary, shown at the top of the run page the failure email links to) and
+    # fail the run so GitHub sends a notification.
+    if failures:
+        _write_failure_summary(failures)
         raise RuntimeError(
-            f"{len(failed_ids)} of the FORM email(s) failed to process: "
-            f"{failed_ids}. See the per-email logs above for the cause and "
-            "whether each was left unread for retry or marked read (expired link)."
+            f"{len(failures)} of the FORM email(s) failed to process: "
+            f"{[mid for mid, _ in failures]}. See the run summary / logs above "
+            "for the cause and the action needed."
         )
+
+
+# ---------------------------------------------------------------------------
+# Failure reporting
+# ---------------------------------------------------------------------------
+
+def _remediation(exc: Exception) -> str:
+    """Return a human, action-oriented description for a failure."""
+    if isinstance(exc, ExpiredLinkError):
+        return (
+            "The FORM download link expired before it could be fetched. "
+            "**Re-export your data from the FORM app** — the new email will be "
+            "processed automatically. (This email was marked read.)"
+        )
+    if isinstance(exc, GarminAuthError):
+        return (
+            "Garmin rejected the saved login. **Re-seed your token**: run "
+            "`python scripts/seed_garmin_tokens.py` locally and update the "
+            "`FFF_GARMIN_TOKENS` secret. Then re-export from FORM (this email "
+            "was marked read)."
+        )
+    if isinstance(exc, TransientError):
+        return (
+            "Temporary error (network or Garmin outage). **No action needed** — "
+            "it will retry automatically on the next run. Investigate only if it "
+            "keeps happening."
+        )
+    return (
+        "Unexpected error — see the logs for the traceback. The email was marked "
+        "read to avoid repeated failures; re-export from FORM once resolved."
+    )
+
+
+def _write_failure_summary(failures: list[tuple[str, Exception]]) -> None:
+    """Write a markdown summary to the GitHub Actions run page, if available.
+
+    The file at $GITHUB_STEP_SUMMARY renders at the top of the run page that the
+    failure-notification email links to, so the required action is the first
+    thing you see. Falls back to logging when not running in Actions.
+    """
+    lines = ["## ⚠️ FORM → Garmin Sync: action needed", ""]
+    for msg_id, exc in failures:
+        lines.append(f"- **Email {msg_id}** — {_remediation(exc)}")
+    summary = "\n".join(lines) + "\n"
+
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with open(summary_path, "a", encoding="utf-8") as f:
+                f.write(summary)
+            return
+        except OSError as e:
+            _logger.warning(f"Could not write GitHub step summary: {e}")
+
+    # Not in Actions (or write failed) — log it so it's still visible.
+    _logger.error("Failure summary:\n" + summary)
 
 
 # ---------------------------------------------------------------------------
