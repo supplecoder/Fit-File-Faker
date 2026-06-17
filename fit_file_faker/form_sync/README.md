@@ -80,10 +80,22 @@ You need two numbers from your physical Garmin device:
 - **Unit ID** — Settings → System → About → Unit ID. This is a long number
   (e.g. `3490329847`). Despite the FIT spec calling this field "serial_number",
   it is **not** the printed serial on the back of the watch.
-- **Product (device) ID** — the numeric model ID for your device. Look it up in
+- **Product (device) ID** — the numeric model ID for your device. The easiest
+  way to find your device is the main tool's interactive picker, which lets you
+  choose by name (e.g. "Forerunner 965") rather than hunting for a number:
+
+  ```bash
+  fit-file-faker --config-menu
+  ```
+
+  Create/edit a profile, select your device from the list, and note the product
+  ID it shows (Forerunner 965 = `4315`). Alternatively, look it up directly in
   the supplemental registry in [`../config.py`](../config.py)
-  (`SUPPLEMENTAL_GARMIN_DEVICES`) — e.g. Forerunner 965 = `4315`. The matching
-  firmware version is looked up automatically, so you don't set it.
+  (`SUPPLEMENTAL_GARMIN_DEVICES`). Either way, the matching firmware version is
+  resolved automatically, so you don't set it.
+
+  > Future improvement: integrate this device selection directly into the
+  > form_sync setup so the product ID is discovered the same way as the main CLI.
 
 > Matching the Unit ID to your real device is what makes Garmin Connect grant
 > Training Effect / Training Status. A random Unit ID may upload but won't be
