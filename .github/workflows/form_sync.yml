@@ -1,12 +1,19 @@
 name: FORM → Garmin Sync
 
 on:
-  schedule:
-    # Run every 15 minutes. FORM links are signed with short-lived (~1h) AWS
-    # STS credentials, so we poll often enough to fetch a fresh export well
-    # before its temporary token expires.
-    - cron: "*/15 * * * *"
-  workflow_dispatch:  # Allow manual trigger from GitHub Actions UI
+  # Primary trigger: a Google Apps Script watches Gmail and fires this via the
+  # GitHub repository_dispatch API the moment a FORM export email arrives.
+  # This is used instead of `schedule` because scheduled (cron) workflows do
+  # NOT run on forked repositories — GitHub silently disables them on forks.
+  repository_dispatch:
+    types: [form-export-ready]
+
+  # Manual trigger from the GitHub Actions UI / API (also works on forks).
+  workflow_dispatch:
+
+  # NOTE: `schedule` is intentionally omitted. Cron triggers never fire on a
+  # fork. If this repo is ever detached from its fork (or recreated as a
+  # standalone repo), a `schedule:` block could be added here as a fallback.
 
 jobs:
   sync:
