@@ -11,13 +11,12 @@ on:
   # Manual trigger from the GitHub Actions UI / API (also works on forks).
   workflow_dispatch:
 
-  # Fallback schedule. NOTE: cron triggers do NOT fire on forked repositories,
-  # so this is currently inactive — the repository_dispatch path above is what
-  # actually runs the sync. Kept here so that if this repo is ever detached
-  # from its fork (or recreated as a standalone repo), the 15-minute polling
-  # fallback activates automatically with no further changes.
-  schedule:
-    - cron: "*/15 * * * *"
+  # NOTE: a `schedule:` cron trigger was removed. On forks (and low-activity
+  # repos) GitHub's scheduler is best-effort and heavily throttles cron — a
+  # "*/15" request was actually firing only every 2–4 hours, with intermediate
+  # ticks silently dropped. The Apps Script repository_dispatch path above is
+  # the reliable trigger. If this repo is ever recreated as a standalone
+  # (non-fork) repo, cron is honored normally and a schedule block can return.
 
 jobs:
   sync:
